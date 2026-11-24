@@ -2,6 +2,13 @@
 
 本文件从 `1.3.0` 起记录；更早的版本没有留下条目。
 
+## 1.3.1
+
+与 `@local/dsh-deliberate-preset` 同版本。只修评测器与文档，`loop-guard.cjs` / `memory.cjs` 未改。
+
+- **工具组合**：proof 原始 23 项（含 `session-memory`）保持不变，另新增 `loop-guard`；评测器按 preset 分列基准（proof 23 项 / deliberate 22 项），新增项单独报告、不算失败。
+- **文档**：README 补工具组合说明；版本号 `1.3.0` → `1.3.1`。
+
 ## 1.3.0
 
 与 `@local/dsh-deliberate-preset` 同版本发布，补齐两轮审查（R1–R12）里属于求证模式的条目。

@@ -1,6 +1,6 @@
 # 求证 · DSH Agent Preset
 
-版本 1.3.0。适用于 OI 解题、反例定位与有限预算的对拍。
+版本 1.3.1。适用于 OI 解题、反例定位与有限预算的对拍。
 
 「求证」是 DeepSeek Harness 的一个 agent preset bundle：persona 定义求证工作流，`loop-guard.cjs` 做运行时防循环，`memory.cjs` 注册 `proof_checkpoint` 断点工具，其余是标准工具配置。
 
@@ -31,7 +31,7 @@ dsh plugin --profile desktop add github:Dexter-cpp/dsh-proof-preset
 **离线 tgz**（仓库里不带，需用 `npm pack` 自己产出）：
 
 ```powershell
-dsh plugin --profile desktop add file:C:/path/to/local-dsh-proof-preset-1.3.0.tgz
+dsh plugin --profile desktop add file:C:/path/to/local-dsh-proof-preset-1.3.1.tgz
 ```
 
 **源码直连**，改完立刻生效，适合自己调：
@@ -55,6 +55,8 @@ dsh plugin --profile desktop add file:C:/path/to/local-dsh-proof-preset-1.3.0.tg
 | `cordis.patch.yml` | 声明 `@deepseek-ai/dsh-agent-preset`（`id: proof`、`order: 6`）及其子插件：persona、`loop-guard`、`memory`、`dsh-tool-fs`/`-pwsh`/`-jobs`/`-skill` 等标准工具子树 |
 | `loop-guard.cjs` | 运行时防循环 hook：连续相同调用/输出硬拦截 + 每 N 个用户轮次注入事前自检 + `proof_directions` 方向记录 |
 | `memory.cjs` | 只做断点：注册 `proof_checkpoint`（save 落盘 / read / clear）。不参与防循环计数，也不再注入换路提示 |
+
+工具组合：原始 23 项（含 `session-memory`）保持不变，另新增 `loop-guard`。
 
 ## 防循环（运行时硬拦截）
 
