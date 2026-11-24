@@ -1,8 +1,8 @@
 {
   "name": "@local/dsh-proof-preset",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "private": true,
-  "description": "DeepSeek Harness 求证模式：从复杂度与正确性论证出发，在有限预算内对拍，保存反例并据此换路。",
+  "description": "DeepSeek Harness 求证模式：从复杂度与正确性论证出发，在有限预算内对拍；用假设账本、反例登记与状态触发的止损避免空转。",
   "type": "module",
   "dsh": {
     "bundle": {
@@ -26,12 +26,24 @@
     "oi",
     "stress-test"
   ],
+  "scripts": {
+    "test": "node --test loop-guard.test.cjs memory.test.cjs parity.test.cjs",
+    "parity": "node sync-runtime.cjs --check"
+  },
   "files": [
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
+    "MIGRATION.md",
     "memory.cjs",
-    "loop-guard.cjs"
+    "loop-guard.cjs",
+    "state-bus.cjs",
+    "ledger.cjs",
+    "runtime-parity.json",
+    "loop-guard.test.cjs",
+    "memory.test.cjs",
+    "parity.test.cjs",
+    "sync-runtime.cjs"
   ]
 }

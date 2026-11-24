@@ -2,6 +2,24 @@
 
 本文件从 `1.3.0` 起记录；更早的版本没有留下条目。
 
+## 1.4.0
+
+与 `@local/dsh-deliberate-preset` 同版本。运行时行为、断点格式、评测与文档同步升级。
+
+- **成功调用不再被硬拦**：`tools/pre-execute` 只有在「同工具 + 同参数 + 同**失败**结果」连续 N 次后才拒绝；成功调用最多得到一条软提示。拒绝码 `REPEATED_IDENTICAL_FAILURE` 只用于失败重复。修复 1.3.1 把正常重复读取判成空转的缺陷。
+- **签名与输出哈希改为全量流式 canonical 编码**（`sig/v2` / `out/v2`）：删除 8 KB 前缀截断，前缀相同不再视为同一调用；BigInt、循环引用、抛错访问器、Buffer、Date、Error、NaN/Infinity 都有确定性标记。
+- **输出 streak 按工具隔离**，图片/资源等非文本 block 参与比较；失败结果不再重复报「相同输出」。
+- **停滞自检改为状态触发**：连续 N 轮没有新证据才注入；`selfCheckEvery` 保留为 1.3.1 兼容项，默认 0（关闭）。
+- **新增 `proof_hypotheses`**：结构化假设账本（五态 + 终态 + 证据驱动 + 数量/长度/总大小上限），在 `loop-guard.cjs` 内注册，不新增插件行。`proof_directions` 参数与文案保持不变，并镜像进账本。
+- **新增 `proof_guard_stats`**：观察/软提示/硬拦截/恢复计数与按工具分布，默认不记录参数正文。
+- **断点升级到 v2**：新增 taskId / goalRef / 结构化 state（goal、excluded、decisions、runs、counterexamples）；v1 断点可读并迁移，`writeSchema: 1` 可写回旧格式用于回滚。
+- **注入按事件触发**（resume / compaction / goal-change / milestone），不再每轮重复同一段正文；投影 fold 阶段就脱敏，内存态不留明文密钥。
+- **宿主能力逐项降级**：`sessionProjections` / `zod` / `defineTool` / `createUserMessage` 缺失时只降级对应功能，不再整插件加载失败；`memory.cjs` 的 `inject` 从 `['tools','sessionProjections']` 改为 `['tools']`。
+- **原子替换在 Windows 上对 EPERM/EBUSY 重试**；POSIX 下断点文件 0600、目录 0700。
+- **测试可独立运行**：新增 `state-bus.cjs` / `ledger.cjs` / `runtime-parity.json` / `sync-runtime.cjs`；`parity.test.cjs` 改为哈希清单校验，不再依赖相邻仓库目录；本仓库补上 `loop-guard.test.cjs`、`memory.test.cjs`、`parity.test.cjs`（33 + 13 + 12 条）。
+- **工具组合**：proof 原始 23 项保持不变，新增项仍只有 `loop-guard`；新工具注册在既有插件内，`cordis.patch.yml` 未增删插件行。
+- 未实施（不写成已完成）：独立反方子代理、三臂对照评测、proof 行为评测、消融实验——见 `MIGRATION.md` 的「未实施项」。
+
 ## 1.3.1
 
 与 `@local/dsh-deliberate-preset` 同版本。只修评测器与文档，`loop-guard.cjs` / `memory.cjs` 未改。

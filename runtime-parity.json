@@ -1,0 +1,12 @@
+{
+  "version": "1.4.0",
+  "files": {
+    "loop-guard.cjs": "261100917dc5fbb1651f32bc5be1621e1c431f2d5fe2c7373098b58372eefedb",
+    "memory.cjs": "bcaceff6757751cedf1d2ed8bb77b14a5a19f122a6383f416580fb65ba37e784",
+    "state-bus.cjs": "6a9376e400a825730917581cf855f63ce81460ac6ac50806925025f648ee0208",
+    "ledger.cjs": "af16fef30b236b7cb4176e9db149526d1447c0f00ed4d9f611969fa3f08f5602",
+    "loop-guard.test.cjs": "45a7fae6ad2b04a44467681215f5abb310e1f426a0ecb12178e578330612dc03",
+    "memory.test.cjs": "c23072bf2eec53379d562c732064f2231cbe01fb09fc55dc1a25604a34fa953d",
+    "parity.test.cjs": "41fb5e9f19b482c75fa69f3fcff68d826f95b71fc24b28be0a1955fddd8aa7cc"
+  }
+}
