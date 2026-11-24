@@ -1,0 +1,35 @@
+{
+  "name": "@local/dsh-proof-preset",
+  "version": "1.1.0-beta.1",
+  "private": true,
+  "description": "DeepSeek Harness 求证模式：从复杂度与正确性论证出发，在有限预算内对拍，保存反例并据此换路。",
+  "type": "module",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Dexter-cpp/dsh-proof-preset.git"
+  },
+  "homepage": "https://github.com/Dexter-cpp/dsh-proof-preset#readme",
+  "bugs": {
+    "url": "https://github.com/Dexter-cpp/dsh-proof-preset/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "agent-preset",
+    "proof",
+    "oi",
+    "stress-test"
+  ],
+  "files": [
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "memory.cjs"
+  ]
+}
