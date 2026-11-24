@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-proof-preset",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": true,
   "description": "DeepSeek Harness 求证模式：从复杂度与正确性论证出发，在有限预算内对拍；用假设账本、反例登记与状态触发的止损避免空转。",
   "type": "module",

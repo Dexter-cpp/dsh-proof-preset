@@ -28,7 +28,10 @@ const SHARED = [
 const ROOT = __dirname;
 const MANIFEST = path.join(ROOT, 'runtime-parity.json');
 
-const sha = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+// 先做行尾归一化（CRLF → LF、去 BOM）再哈希：同一份内容在 LF / CRLF 检出下得到同一摘要。
+// 1.4.0 的清单是在混合行尾的工作区上生成的，Windows 默认 core.autocrlf=true 的克隆会整体判失败。
+const normalize = text => text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
+const sha = file => createHash('sha256').update(normalize(fs.readFileSync(file, 'utf8')), 'utf8').digest('hex');
 
 function readVersion() {
   try {

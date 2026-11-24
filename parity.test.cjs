@@ -17,7 +17,10 @@ const { createHash } = require('node:crypto');
 
 const ROOT = __dirname;
 const read = file => fs.readFileSync(path.join(ROOT, file), 'utf8');
-const sha = file => createHash('sha256').update(fs.readFileSync(path.join(ROOT, file))).digest('hex');
+// 与 sync-runtime.cjs 保持一致：先做行尾归一化（CRLF → LF、去 BOM）再算摘要，
+// 这样 LF（Linux/macOS、core.autocrlf=false）与 CRLF（Windows 默认）检出的结果相同。
+const normalize = text => text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
+const sha = file => createHash('sha256').update(normalize(read(file)), 'utf8').digest('hex');
 
 const manifest = JSON.parse(read('runtime-parity.json'));
 const pkg = JSON.parse(read('package.json'));
@@ -59,7 +62,7 @@ test('package.json 收录新增文件与版本号', () => {
   for (const file of ['state-bus.cjs', 'ledger.cjs', 'loop-guard.cjs', 'memory.cjs', 'runtime-parity.json']) {
     assert.ok(pkg.files.includes(file), 'package.json files 缺少 ' + file);
   }
-  assert.equal(pkg.version, '1.4.0');
+  assert.equal(pkg.version, '1.4.1');
 });
 
 test('测试与评测代码不依赖相邻仓库目录', () => {

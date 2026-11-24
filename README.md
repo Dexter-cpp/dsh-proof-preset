@@ -1,6 +1,6 @@
 # 求证 · DSH Agent Preset
 
-版本 1.4.0。适用于 OI 解题、反例定位与有限预算的对拍。
+版本 1.4.1。适用于 OI 解题、反例定位与有限预算的对拍。
 
 「求证」是 DeepSeek Harness 的一个 agent preset bundle：persona 定义求证工作流，`loop-guard.cjs` 做运行时防循环，`memory.cjs` 注册 `proof_checkpoint` 断点工具，其余是标准工具配置。
 

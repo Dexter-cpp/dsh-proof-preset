@@ -2,6 +2,13 @@
 
 本文件从 `1.3.0` 起记录；更早的版本没有留下条目。
 
+## 1.4.1
+
+只修一致性校验与文档，运行时（`loop-guard.cjs` / `memory.cjs` / `state-bus.cjs` / `ledger.cjs`）未改。
+
+- **parity 哈希改为行尾归一化**：`sync-runtime.cjs` 与 `parity.test.cjs` 先做 CRLF → LF、去 BOM 再算 SHA256，并重写 `runtime-parity.json`。修复 1.4.0 的清单在混合行尾的工作区上生成、换行不同就报「共享文件被单边修改」的问题——Windows 默认 `core.autocrlf=true` 的克隆与 Linux/macOS 的 LF 克隆此前都会在 `node --test` 里失败。
+- 运行时、persona、断点格式、工具组合与 1.4.0 完全相同，升级无需迁移。
+
 ## 1.4.0
 
 与 `@local/dsh-deliberate-preset` 同版本。运行时行为、断点格式、评测与文档同步升级。
