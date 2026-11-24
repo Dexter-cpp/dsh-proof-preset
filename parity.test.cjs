@@ -62,7 +62,7 @@ test('package.json 收录新增文件与版本号', () => {
   for (const file of ['state-bus.cjs', 'ledger.cjs', 'loop-guard.cjs', 'memory.cjs', 'runtime-parity.json']) {
     assert.ok(pkg.files.includes(file), 'package.json files 缺少 ' + file);
   }
-  assert.equal(pkg.version, '1.4.1');
+  assert.equal(pkg.version, '1.4.5');
 });
 
 test('测试与评测代码不依赖相邻仓库目录', () => {
@@ -88,7 +88,9 @@ test('硬拦截只针对失败重复（成功不得误判）', () => {
 
 test('输出 streak 按工具隔离，且覆盖非文本输出', () => {
   assert.match(guard, /state\.streaks\.get\(exec\.name\)/, 'streak 必须按工具取');
-  assert.match(guard, /type === 'image'/, '图片块必须参与输出哈希');
+  const { outputKey } = require('./loop-guard.cjs')._internals;
+  const resource = blob => ({ content: [{ type: 'resource', resource: { blob } }] });
+  assert.notEqual(outputKey(resource('AAA')), outputKey(resource('BBB')));
   assert.match(guard, /function hasOutput/);
 });
 

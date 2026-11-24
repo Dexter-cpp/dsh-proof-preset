@@ -31,6 +31,7 @@ const MODE = (() => {
 })();
 
 const DENIAL_CODE = 'REPEATED_IDENTICAL_FAILURE';
+const CYCLE_CODE = 'REPEATED_FAILURE_CYCLE';
 const NOTICE_KIND = MODE + 'LoopGuard';
 const CHECKPOINT_TOOL = MODE + '_checkpoint';
 const DIRECTIONS_TOOL = MODE + '_directions';
@@ -79,7 +80,8 @@ const EXCLUDED_TOOLS = new Set([
 ]);
 
 /** 只影响展示、不改变操作的参数；同一命令换一句 description 不应被当成新策略。 */
-const PRESENTATION_KEYS = new Set(['description', 'title', 'summary', 'label']);
+const PRESENTATION_KEYS = new Set(['description']);
+const SHELL_TOOLS = new Set(['pwsh', 'bash']);
 
 const describe = error => (error instanceof Error ? error.message : String(error));
 
@@ -249,8 +251,8 @@ function writeCanonical(sink, value, seen, depth) {
   return undefined;
 }
 
-function stripPresentation(args) {
-  if (!args || typeof args !== 'object' || Array.isArray(args)) return args;
+function stripPresentation(name, args) {
+  if (!SHELL_TOOLS.has(name) || !args || typeof args !== 'object' || Array.isArray(args)) return args;
   try {
     return Object.fromEntries(Object.entries(args).filter(([key]) => !PRESENTATION_KEYS.has(key)));
   } catch (error) {
@@ -265,7 +267,7 @@ function signature(name, args) {
   sink.update(String(name));
   sink.update('\n');
   try {
-    writeCanonical(sink, stripPresentation(args), new Map(), 0);
+    writeCanonical(sink, stripPresentation(name, args), new Map(), 0);
   } catch (error) {
     sink.update('{"$fail":"' + describe(error).slice(0, 60) + '"}');
   }
@@ -280,34 +282,9 @@ function blocksOf(result) {
   return Array.isArray(content) ? content : [];
 }
 
-function writeBlocks(sink, blocks) {
-  sink.update('#' + blocks.length + '\n');
-  for (const block of blocks) {
-    if (!block || typeof block !== 'object') {
-      sink.update('raw\0');
-      writeCanonical(sink, block, new Map(), 0);
-      continue;
-    }
-    const type = String(block.type ?? 'unknown');
-    sink.update('blk\0' + type + '\0');
-    if (type === 'text') {
-      sink.update('text\0' + String(block.text ?? ''));
-    } else if (type === 'image') {
-      const source = block.source ?? {};
-      sink.update('image\0' + String(block.mimeType ?? source.media_type ?? '') + '\0' + String(source.data ?? ''));
-    } else if (type === 'resource') {
-      const resource = block.resource ?? {};
-      sink.update('resource\0' + String(resource.uri ?? '') + '\0' + String(resource.text ?? ''));
-    } else {
-      writeCanonical(sink, block, new Map(), 0);
-    }
-    sink.update('\0');
-  }
-}
-
 /** 输出 hash：状态 + 错误码 + 全部 content block（含非文本）。 */
 function outputKey(result) {
-  const failed = result?.isError === true || result?.error !== undefined;
+  const failed = result?.isError === true || result?.error != null;
   const code = failed ? String(result?.error?.code ?? result?.error?.info?.code ?? '') : '';
   const sink = createHash('sha256');
   sink.update('out/v2\n');
@@ -315,7 +292,7 @@ function outputKey(result) {
   sink.update(code);
   sink.update('\n');
   try {
-    writeBlocks(sink, blocksOf(result));
+    writeCanonical(sink, [result?.error, blocksOf(result), result?.structuredContent], new Map(), 0);
   } catch (error) {
     sink.update('{"$fail":"' + describe(error).slice(0, 60) + '"}');
   }
@@ -334,6 +311,7 @@ function outputText(result) {
 
 /** 有内容即算"带来信息"：文本非空，或存在任何非文本 block。 */
 function hasOutput(result) {
+  if (result?.structuredContent != null) return true;
   const blocks = blocksOf(result);
   if (blocks.length === 0) return false;
   return blocks.some(block => {
@@ -351,6 +329,9 @@ function createState() {
     tool: '',
     signature: '',
     failed: false,
+    failureHash: '',
+    failures: [],
+    cycleNext: '',
     count: 0,
     // B1'：按工具的输出 streak
     streaks: new Map(),
@@ -358,7 +339,10 @@ function createState() {
     lastTurn: null,
     rounds: 0,
     evidenceSeq: 0,
-    goalRev: null,
+    goalRef: null,
+    observedStep: false,
+    novelStep: false,
+    noticesThisTurn: 0,
     denials: 0,
     rejectedTurn: null,
     // 通知队列与去重水位
@@ -414,10 +398,15 @@ function noticeText(reason, count, tool, directions, extra = {}) {
     lines.push('[目标变更]',
       '目标版本已变化，旧假设与旧方向已归档，不再作为当前提示。',
       '重新确认验收条件后再继续；不要把归档的结论当成当前结论。');
+  } else if (reason === 'cycle') {
+    lines.push('[重复失败路线]', `两种操作交替失败了 ${count} 个周期，每种操作的参数与失败结果都重复。`,
+      '只有前提发生变化才重试。否则用一个能区分原因的新检查换路，或报告已有结果和最小恢复条件。');
+  } else if (reason === 'failure') {
+    lines.push('[重复失败]', loopInstruction(count));
   } else if (reason === 'output') {
     lines.push('[运行时防循环]',
-      `连续 ${count} 次得到相同输出（调用参数不同，工具 ${tool || '未知'}），本次调用已执行但没有带来新信息。`,
-      '换一个能改变输出的检查，而不是原样重试。');
+      `连续 ${count} 次得到相同输出（工具 ${tool || '未知'}）。`,
+      '若验收已通过就收工；若仍有疑点，换一个能改变输出的检查。轮询任务按任务状态与既定预算继续。');
   } else {
     lines.push('[运行时防循环]',
       `同一工具、同一参数和同一失败结果已连续 ${count} 次${tool ? `（${tool}）` : ''}，本次调用未执行。`,
@@ -429,6 +418,38 @@ function noticeText(reason, count, tool, directions, extra = {}) {
   }
   lines.push(...directionLines(directions));
   return lines.join('\n');
+}
+
+// 只匹配最近 N 对完整的 A/B 失败。签名区分操作，结果摘要区分报错。
+function nextInFailureCycle(history, threshold) {
+  if (history.length < threshold * 2 || history[0].sig === history[1].sig) return '';
+  for (let index = 2; index < history.length; index += 1) {
+    const expected = history[index % 2];
+    if (history[index].sig !== expected.sig || history[index].hash !== expected.hash) return '';
+  }
+  return history[0].sig;
+}
+
+function signalNewEvidence(sessionId, current, previous = []) {
+  const observed = entries => entries
+    .filter(e => e.kind !== 'self' && e.validity === 'valid' && e.result)
+    .map(e => JSON.stringify([e.kind, e.source, e.result]));
+  const known = new Set(observed(previous));
+  if (observed(current).some(entry => !known.has(entry))) bus.noteEvidence(sessionId, { kind: 'hypothesis' });
+}
+
+function resetAttempts(state) {
+  state.failed = false;
+  state.count = 0;
+  state.failures = [];
+  state.cycleNext = '';
+  state.streaks.clear();
+  state.denials = 0;
+  state.rejectedTurn = null;
+  state.notices = [];
+  state.observedStep = false;
+  state.novelStep = false;
+  state.rounds = 0;
 }
 
 function normalizeDirections(items) {
@@ -600,7 +621,7 @@ exports.apply = async function apply(ctx, config = {}) {
           if (args.action === 'read') return ledger.view(sessionId);
           if (args.action === 'set') {
             const item = ledger.set(sessionId, { ...args, taskId });
-            bus.noteEvidence(sessionId, { kind: 'hypothesis' });
+            signalNewEvidence(sessionId, item.evidence);
             const warn = ledger.falsifiedFingerprints(sessionId).has(item.fingerprint)
               ? '\n注意：已有同义假设被证伪；本次为新建记录，请说明与旧结论的差异。'
               : '';
@@ -611,14 +632,16 @@ exports.apply = async function apply(ctx, config = {}) {
             const item = ledger.archive(sessionId, args.id, args.statement || '');
             return `已归档 ${item.id}。`;
           }
+          const previous = ledger.get(sessionId, args.id).evidence;
           if (args.action === 'reopen') {
             const evidence = Array.isArray(args.evidence) ? args.evidence[0] : args.evidence;
             const item = ledger.reopen(sessionId, args.id, evidence);
-            bus.noteEvidence(sessionId, { kind: 'reopen' });
+            signalNewEvidence(sessionId, item.evidence, previous);
             return `已重开 ${item.id}（${item.status}）。`;
           }
+          if (args.action !== 'update') throw new Error('未知的假设账本操作');
           const item = ledger.update(sessionId, args.id, args);
-          bus.noteEvidence(sessionId, { kind: 'hypothesis' });
+          signalNewEvidence(sessionId, item.evidence, previous);
           return `${item.id} 现为 ${item.status}；证据 ${item.evidence.length} 条。`;
         },
       }));
@@ -673,15 +696,18 @@ exports.apply = async function apply(ctx, config = {}) {
           && state.count >= settings.threshold
           && state.tool === exec.name
           && state.signature === sig;
-        if (settings.denyOn === 'failure' && repeatFailure) {
+        const repeatCycle = state.cycleNext === sig;
+        if (settings.denyOn === 'failure' && (repeatFailure || repeatCycle)) {
           state.denials += 1;
           state.stats.denied += 1;
           perTool.denied += 1;
-          pushNotice(state, { reason: 'call', count: state.count, tool: exec.name });
+          const reason = repeatCycle ? 'cycle' : 'call';
+          const count = repeatCycle ? settings.threshold : state.count;
+          pushNotice(state, { reason, count, tool: exec.name });
           decision = {
             kind: 'deny',
-            reason: noticeText('call', state.count, exec.name, state.directions, {}),
-            info: { name: 'ModeLoopGuard', code: DENIAL_CODE },
+            reason: noticeText(reason, count, exec.name, state.directions, {}),
+            info: { name: 'ModeLoopGuard', code: repeatCycle ? CYCLE_CODE : DENIAL_CODE },
           };
         }
       }
@@ -698,36 +724,56 @@ exports.apply = async function apply(ctx, config = {}) {
     try {
       if (!settings.enabled || !exec?.agent || EXCLUDED_TOOLS.has(exec.name)) return;
       // 本 hook 自己的拒绝不计入序列，否则会自我强化。
-      if (result?.error?.info?.code === DENIAL_CODE || result?.error?.code === DENIAL_CODE) return;
+      if ([DENIAL_CODE, CYCLE_CODE].some(code => code === result?.error?.info?.code || code === result?.error?.code)) return;
       const state = stateOf(exec.agent);
       state.denials = 0;
 
-      const failed = result?.isError === true || result?.error !== undefined;
+      const failed = result?.isError === true || result?.error != null;
       const sig = signature(exec.name, exec.arguments);
-      if (state.tool === exec.name && state.signature === sig && state.failed === failed) {
+      const key = outputKey(result);
+      if (state.tool === exec.name && state.signature === sig && state.failed === failed && state.failureHash === key) {
         state.count += 1;
       } else {
         state.tool = exec.name;
         state.signature = sig;
         state.failed = failed;
+        state.failureHash = key;
         state.count = 1;
+      }
+      const priorCycle = state.cycleNext;
+      if (failed) {
+        state.failures.push({ sig, hash: key });
+        if (state.failures.length > 2 * settings.threshold) state.failures.shift();
+      } else {
+        state.failures.length = 0;
+      }
+      state.cycleNext = nextInFailureCycle(state.failures, settings.threshold);
+      if (state.cycleNext && !priorCycle) {
+        pushNotice(state, { reason: 'cycle', count: settings.threshold, tool: exec.name });
       }
 
       // 输出 streak 按工具隔离；没有内容（空 content / 纯空白文本）不参与。
       // 失败结果交给失败链处理，不再重复报“相同输出”（否则同一现象两条提示）。
       if (hasOutput(result) && !failed) {
-        const key = outputKey(result);
         const streak = state.streaks.get(exec.name) ?? { hash: '', count: 0 };
         if (streak.hash === key) streak.count += 1;
         else { streak.hash = key; streak.count = 1; }
         state.streaks.set(exec.name, streak);
-        if (streak.count >= settings.outputStreakThreshold) {
+        state.observedStep = true;
+        if (streak.count === 1) state.novelStep = true;
+        if (streak.count === settings.outputStreakThreshold) {
           pushNotice(state, { reason: 'output', count: streak.count, tool: exec.name });
+        }
+      } else {
+        state.streaks.delete(exec.name);
+        if (failed) {
+          state.observedStep = true;
+          if (state.count === 1 && !state.cycleNext) state.novelStep = true;
         }
       }
 
-      if (failed && state.count >= settings.threshold) {
-        pushNotice(state, { reason: 'call', count: state.count, tool: exec.name });
+      if (failed && state.count === settings.threshold) {
+        pushNotice(state, { reason: 'failure', count: state.count, tool: exec.name });
       }
     } catch (error) {
       log('tools/result 异常，已忽略本次观测：' + describe(error));
@@ -738,7 +784,7 @@ exports.apply = async function apply(ctx, config = {}) {
   ctx.on('agent/pre-step', async (payload, next) => {
     const decision = await next();
     try {
-      if (decision?.kind === 'reject' || payload?.signal?.aborted) return decision;
+      if (!settings.enabled || decision?.kind === 'reject' || payload?.signal?.aborted) return decision;
       const state = stateOf(payload?.agent);
       const sessionId = String(payload?.agent?.id ?? '');
       const fresh = beginStep(state, payload, sessionId);
@@ -748,8 +794,10 @@ exports.apply = async function apply(ctx, config = {}) {
         return { kind: 'reject' };
       }
       if (fresh.length === 0) return decision;
-      const selected = fresh.slice(0, settings.maxNoticesPerTurn);
-      for (const notice of selected) state.stats.soft += 1;
+      const selected = fresh.slice(0, settings.maxNoticesPerTurn - state.noticesThisTurn);
+      if (!selected.length) return decision;
+      state.noticesThisTurn += selected.length;
+      state.stats.soft += selected.length;
       const messages = selected.map(notice => makeMessage(noticeText(notice.reason, notice.count, notice.tool, state.directions, notice.extra)));
       return { ...decision, messages: [...(decision.messages ?? []), ...messages] };
     } catch (error) {
@@ -771,23 +819,28 @@ exports.apply = async function apply(ctx, config = {}) {
 
   /** C2：状态触发的停滞检查；返回本轮需要注入的通知。 */
   function beginStep(state, payload, sessionId) {
-    if (payload?.turn !== state.lastTurn) {
+    const newTurn = payload?.turn !== state.lastTurn;
+    if (newTurn) {
+      if (state.lastTurn !== null) resetAttempts(state);
       state.lastTurn = payload?.turn;
-      state.denials = 0;
-      state.rejectedTurn = null;
-      state.rounds += 1;
+      state.noticesThisTurn = 0;
     }
+    if (state.novelStep) state.rounds = 0;
+    else if (state.observedStep) state.rounds += 1;
+    state.observedStep = false;
+    state.novelStep = false;
 
     try {
       const snap = bus.snapshot(sessionId);
       // 目标版本变化：归档旧假设，清空停滞计数。
-      if (snap.goalRef && state.goalRev !== null && snap.goalRef.revision !== state.goalRev) {
+      if (snap.goalRef && state.goalRef && (snap.goalRef.id !== state.goalRef.id || snap.goalRef.revision !== state.goalRef.revision)) {
         const archived = ledger.archiveAll(sessionId, 'goal-change');
-        state.rounds = 0;
+        resetAttempts(state);
+        state.directions = [];
         state.stats.recovered += 1;
         pushNotice(state, { reason: 'goal', count: archived, tool: '' });
       }
-      if (snap.goalRef) state.goalRev = snap.goalRef.revision;
+      if (snap.goalRef) state.goalRef = snap.goalRef;
       // 新证据：解除停滞。
       if (snap.evidenceSeq !== state.evidenceSeq) {
         state.evidenceSeq = snap.evidenceSeq;
@@ -799,7 +852,7 @@ exports.apply = async function apply(ctx, config = {}) {
     }
 
     // 兼容 1.3.1：显式开启才按用户轮次自检（默认关闭）。
-    if (settings.selfCheckEvery > 0
+    if (newTurn && settings.selfCheckEvery > 0
       && Number.isInteger(payload?.turn) && payload.turn > 0
       && payload.turn % settings.selfCheckEvery === 0) {
       pushNotice(state, { reason: 'self-legacy', count: payload.turn, tool: '' });

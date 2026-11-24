@@ -126,6 +126,17 @@ function publicItem(item) {
   return { ...item, evidence: item.evidence.map(entry => ({ ...entry })) };
 }
 
+function validateConclusion(item) {
+  if (item.status === 'testing' && item.risk === 'high' && !item.nextCheck) {
+    throw new Error('高风险假设进入 testing 前必须写 nextCheck');
+  }
+  if (item.status !== 'supported' && item.status !== 'falsified') return;
+  if (item.evidence.some(entry => entry.validity === 'valid' && entry.kind !== 'self' && entry.result)) return;
+  throw new Error(item.status === 'supported'
+    ? 'supported 需要至少一条有效且非自证的证据，并写明观察结果'
+    : 'falsified 需要反例/实验/矛盾证据，并写明观察结果');
+}
+
 function set(sessionId, input = {}) {
   const store = storeOf(sessionId);
   const statement = clip(input.statement, limits.maxStatementChars);
@@ -142,9 +153,6 @@ function set(sessionId, input = {}) {
   const risk = assertEnum(input.risk, RISKS, 'risk') ?? 'medium';
   const axis = assertEnum(input.axis, AXES, 'axis') ?? 'other';
   const nextCheck = clip(input.nextCheck, limits.maxNextCheckChars);
-  if (status === 'testing' && risk === 'high' && !nextCheck) {
-    throw new Error('高风险假设进入 testing 前必须写 nextCheck（最便宜且能区分的检查）');
-  }
   const item = {
     id,
     taskId: String(input.taskId ?? '').slice(0, 64),
@@ -169,6 +177,7 @@ function set(sessionId, input = {}) {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+  validateConclusion(item);
   checkBudget(store, item);
   store.items.set(id, item);
   store.order.push(id);
@@ -193,6 +202,9 @@ function update(sessionId, id, patch = {}) {
     if (!statement) throw new Error('statement 不能为空');
     next.statement = statement;
     next.fingerprint = fingerprint(statement);
+    if (next.fingerprint !== item.fingerprint && ['supported', 'falsified'].includes(item.status)) {
+      throw new Error('修改已有结论的命题请新建假设，并用 supersedes 关联原命题');
+    }
   }
   if (patch.nextCheck !== undefined) next.nextCheck = clip(patch.nextCheck, limits.maxNextCheckChars);
   if (patch.risk !== undefined) next.risk = assertEnum(patch.risk, RISKS, 'risk');
@@ -210,20 +222,10 @@ function update(sessionId, id, patch = {}) {
           : `不允许 ${item.status} → ${target}；合法目标：${allowed.join(' / ') || '无'}`
       );
     }
-    if (target === 'supported') {
-      const usable = next.evidence.filter(entry => entry.validity === 'valid' && entry.kind !== 'self');
-      if (usable.length === 0) throw new Error('supported 需要至少一条有效且非自证的证据');
-    }
-    if (target === 'falsified') {
-      const usable = next.evidence.filter(entry => entry.validity === 'valid' && entry.kind !== 'self');
-      if (usable.length === 0) throw new Error('falsified 需要反例/实验/矛盾证据，不能凭信心');
-    }
-    if (target === 'testing' && next.risk === 'high' && !next.nextCheck) {
-      throw new Error('高风险假设进入 testing 前必须写 nextCheck');
-    }
     next.status = target;
   }
 
+  validateConclusion(next);
   next.updatedAt = new Date().toISOString();
   checkBudget(store, next);
   store.items.set(next.id, next);

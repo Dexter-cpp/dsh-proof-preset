@@ -200,7 +200,10 @@ test('成功与失败同文本、不同错误码都要区分', () => {
 test('对象键序不影响签名；顶层展示字段被忽略', () => {
   const { signature } = guard._internals;
   assert.equal(signature('x', { a: { y: 1, x: 2 } }), signature('x', { a: { x: 2, y: 1 } }));
-  assert.equal(signature('x', { cmd: 'ls', description: 'a' }), signature('x', { cmd: 'ls', description: 'b' }));
+  assert.equal(signature('pwsh', { command: 'ls', description: 'a' }), signature('pwsh', { command: 'ls', description: 'b' }));
+  for (const field of ['title', 'description', 'label', 'summary']) {
+    assert.notEqual(signature('update_issue', { [field]: 'a' }), signature('update_issue', { [field]: 'b' }));
+  }
 });
 
 test('BigInt / 循环引用 / 抛错访问器都不会让守卫崩溃，且签名稳定', async () => {
@@ -327,13 +330,111 @@ test('缺少 hostManifest 时仍能拦截，注入退化为纯文本 user 消息
 
 // ── 停滞与目标 ─────────────────────────────────────────────────────────────
 
-test('连续 N 轮没有新证据时注入停滞检查（状态触发，不是按轮次取模）', async () => {
-  const ctx = start({ stallRounds: 2 });
-  assert.equal((await step(ctx, 1)).messages.length, 0);
-  const second = await step(ctx, 2);
+test('同一用户轮连续两个步骤只产生重复观察时才提示停滞', async () => {
+  const ctx = start({ stallRounds: 2, outputStreakThreshold: 10 });
+  for (const turn of [1, 2, 3]) assert.equal((await step(ctx, turn)).messages.length, 0);
+  for (let i = 0; i < 2; i++) {
+    await result(ctx, 'read', { path: 'a' }, 'same');
+    assert.equal((await step(ctx, 3)).messages.length, 0);
+  }
+  await result(ctx, 'read', { path: 'a' }, 'same');
+  const second = await step(ctx, 3);
   assert.equal(second.messages.length, 1);
   assert.match(second.messages[0].content[0].text, /连续 2 轮没有新证据/);
   assert.match(second.messages[0].content[0].text, /当前假设/);
+});
+
+test('相同参数出现不同失败时重新计数，包含只有结构化错误的情况', async () => {
+  const ctx = start({ threshold: 2 });
+  for (const message of ['first', 'second', 'third', 'third']) {
+    assert.equal((await call(ctx, 'check', {}, 'c')).kind, 'allow');
+    await ctx.emitResult({ agent, name: 'check', arguments: {} }, { isError: true, error: { code: 'E', message }, content: [] });
+  }
+  assert.equal((await call(ctx, 'check', {}, 'end')).info.code, DENIAL_CODE);
+});
+
+test('交替失败只拒绝预期的下一操作，守卫自身的拒绝不计入失败历史', async () => {
+  const ctx = start({ threshold: 3 });
+  await step(ctx);
+  for (const path of ['a', 'b', 'a', 'b', 'a', 'b']) {
+    assert.equal((await call(ctx, 'check', { path }, path)).kind, 'allow');
+    await result(ctx, 'check', { path }, 'failed ' + path, true);
+  }
+  assert.equal((await call(ctx, 'check', { path: 'c' }, 'fresh')).kind, 'allow');
+  const denied = await call(ctx, 'check', { path: 'a' }, 'loop');
+  assert.equal(denied.info.code, 'REPEATED_FAILURE_CYCLE');
+  await ctx.emitResult({ agent, name: 'check', arguments: { path: 'a' } }, { isError: true, error: { info: denied.info } });
+  assert.equal((await call(ctx, 'check', { path: 'a' }, 'again')).kind, 'deny');
+  assert.equal((await step(ctx)).kind, 'reject');
+  await step(ctx, 2);
+  assert.equal((await call(ctx, 'check', { path: 'a' }, 'new-turn')).kind, 'allow');
+});
+
+test('交替序列中报错改变或执行成功不会触发循环拦截', async () => {
+  for (const changed of ['different failure', 'success']) {
+    const ctx = start({ threshold: 2 });
+    for (const [path, msg] of [['a', 'errA'], ['b','errB'], ['a',changed], ['b','errB']]) {
+      await result(ctx, 'check', { path }, msg, msg !== 'success');
+    }
+    assert.equal((await call(ctx, 'check', { path: 'a' }, 'next')).kind, 'allow');
+  }
+});
+
+test('只提示模式保留 A/B 反馈，关闭守卫时始终静默', async () => {
+  for (const enabled of [true, false]) {
+    const ctx = start({ threshold: 2, enabled, denyOn: 'never', selfCheckEvery: enabled ? 0 : 1 });
+    await step(ctx);
+    for (const path of ['a','b','a','b']) await result(ctx, 'read', { path }, 'missing', true);
+    assert.equal((await call(ctx, 'read', { path: 'a' }, 'next')).kind, 'allow');
+    const notes = (await step(ctx)).messages;
+    assert.equal(notes.length, enabled ? 1 : 0);
+    if (enabled) assert.match(notes[0].content[0].text, /交替失败/);
+    else assert.equal((await step(ctx, 2)).messages.length, 0);
+  }
+});
+
+test('提示配额跨同一用户轮的多个步骤累计，新用户轮恢复配额', async () => {
+  const ctx = start({ maxNoticesPerTurn: 1, outputStreakThreshold: 2 });
+  await step(ctx);
+  async function repeatedOutput(name, turn) {
+    await result(ctx, name, {}, 'steady');
+    await result(ctx, name, {}, 'steady');
+    return (await step(ctx, turn)).messages.length;
+  }
+  assert.equal(await repeatedOutput('first', 1), 1);
+  assert.equal(await repeatedOutput('second', 1), 0);
+  await step(ctx, 2);
+  assert.equal(await repeatedOutput('second', 2), 1);
+});
+
+test('同 revision 更换目标也清空旧方向和失败链', async () => {
+  const ctx = start({ threshold: 2 });
+  bus.noteGoal(agent.id, { id: 'old', revision: 1 });
+  await step(ctx);
+  await ctx.tool(DIRECTIONS_TOOL).execute({ action: 'set', items: ['旧方向'] }, { agent });
+  await repeatCall(ctx, 2);
+  bus.noteGoal(agent.id, { id: 'new', revision: 1 });
+  const notes = (await step(ctx)).messages.map(m => m.content[0].text).join('');
+  assert.match(notes, /目标版本已变化/);
+  assert.doesNotMatch(notes, /1\. 旧方向/);
+  assert.equal((await call(ctx, 'pwsh', FAIL_ARGS, 'new')).kind, 'allow');
+  assert.match(await ctx.tool(DIRECTIONS_TOOL).execute({ action: 'read' }, { agent }), /没有记录方向/);
+});
+
+test('创建、删除证据与改写已判定命题都遵守相同证据约束', async () => {
+  const ctx = start();
+  const execute = args => ctx.tool(HYPOTHESES_TOOL).execute(args, { agent });
+  const base = { action: 'set', id: 'H1', statement: '命题', status: 'supported' };
+  await assert.rejects(execute(base), /非自证/);
+  await assert.rejects(execute({ ...base, evidence: [{ source: '测试脚本' }] }), /观察结果/);
+  const evidence = [{ kind: 'test', source: 'node check.cjs', result: 'pass' }];
+  await execute({ ...base, evidence });
+  const seq = bus.snapshot(agent.id).evidenceSeq;
+  await execute({ action: 'update', id: 'H1', evidence });
+  assert.equal(bus.snapshot(agent.id).evidenceSeq, seq);
+  await assert.rejects(execute({ action: 'update', id: 'H1', evidence: [] }), /非自证/);
+  await assert.rejects(execute({ action: 'update', id: 'H1', statement: '另一个命题' }), /supersedes/);
+  assert.equal(ledger.get(agent.id, 'H1').evidence.length, 1);
 });
 
 test('记录新证据会解除停滞并计入 recovered', async () => {

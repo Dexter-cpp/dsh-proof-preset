@@ -219,3 +219,29 @@ test('缺 sessionProjections / zod 时插件仍加载，断点工具可用', asy
   assert.equal(tools.length, 1);
   assert.equal(memory.inject.includes('sessionProjections'), false);
 });
+
+test('Cordis 可选服务通过 get 查找；断点在写入成功后同步新增观察和目标', async () => {
+  useHome();
+  const bus = require('./state-bus.cjs');
+  const agent = { id: 'session-bus' };
+  const tools = [];
+  const ctx = {
+    get(name) { assert.equal(name, 'sessionProjections'); return undefined; },
+    get sessionProjections() { throw new Error('without inject'); },
+    tools: { register(tool) { tools.push(tool); } },
+    on() {},
+  };
+  await memory.apply(ctx, { hostManifest: HOST_MANIFEST });
+  const save = fields => tools[0].execute({ action: 'save', note: 'phase', ...fields }, { agent });
+  const goalRef = { id: 'g', revision: 1 };
+  await save({ goalRef, runs: ['seed 42 passed'] });
+  assert.deepEqual(bus.snapshot(agent.id).goalRef, goalRef);
+  assert.equal(bus.snapshot(agent.id).evidenceSeq, 1);
+  await save({ goalRef, runs: ['seed 42 passed'], nextAction: '再检查' });
+  assert.equal(bus.snapshot(agent.id).evidenceSeq, 1);
+  await assert.rejects(save({ note: '', goalRef: { id: 'other', revision: 1 } }));
+  assert.deepEqual(bus.snapshot(agent.id).goalRef, goalRef);
+  await save({ goalRef: { id: 'g', revision: 2 }, counterexamples: ['n=6'] });
+  assert.equal(bus.snapshot(agent.id).goalRef.revision, 2);
+  assert.equal(bus.snapshot(agent.id).evidenceSeq, 2);
+});

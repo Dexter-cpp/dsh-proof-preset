@@ -1,12 +1,12 @@
 {
-  "version": "1.4.1",
+  "version": "1.4.5",
   "files": {
-    "loop-guard.cjs": "de165553307fbbf5638ec5ccada265d9d034411bdf8a2106b3d279b4e695d6eb",
-    "memory.cjs": "0479ffe6234b82471f0cb078a43c3b42330ffdd4abae8e0f6b2c00f2ccbde551",
+    "loop-guard.cjs": "0e49aa64db4b35384eaef0ea0992089d993621ecf8178e0db05b089b8b92c230",
+    "memory.cjs": "5c7aee556c6d6d56fd2c6fe83906ee9442a0eb5b2fe69384da833f6b0ea03caf",
     "state-bus.cjs": "6a9376e400a825730917581cf855f63ce81460ac6ac50806925025f648ee0208",
-    "ledger.cjs": "af16fef30b236b7cb4176e9db149526d1447c0f00ed4d9f611969fa3f08f5602",
-    "loop-guard.test.cjs": "45a7fae6ad2b04a44467681215f5abb310e1f426a0ecb12178e578330612dc03",
-    "memory.test.cjs": "c23072bf2eec53379d562c732064f2231cbe01fb09fc55dc1a25604a34fa953d",
-    "parity.test.cjs": "6fecfbd597625e4134bdf9740fe2ece2ff828f23b4883a654ea0b6ded6cf3e36"
+    "ledger.cjs": "f97c9ce24362488a4a137fd1a9863f6051f6ed9ba25a8463ffb547e1edf5b69e",
+    "loop-guard.test.cjs": "34f0936c0ad9d9e3628d887efded2cd2ef26fb0910b58e80e31d27eb51a14421",
+    "memory.test.cjs": "47ef1b0139bab97b901acfdf2ad51317cc438fa9e19565dbb80db07875265478",
+    "parity.test.cjs": "94f6c842b403caeac3f9fd1f5cabdad3c417d312b0b9b526f00e2b68952d29da"
   }
 }

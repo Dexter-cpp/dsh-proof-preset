@@ -17,6 +17,7 @@ const { createRequire } = require('node:module');
 const { homedir } = require('node:os');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const bus = require('./state-bus.cjs');
 
 const mode = require('./package.json').name === '@local/dsh-proof-preset' ? 'proof' : 'deliberate';
 const tool = mode + '_checkpoint';
@@ -297,9 +298,8 @@ exports.apply = async function apply(ctx, config = {}) {
 
   // 投影是可选的：缺失时只用文件，不影响工具本身。
   let projection = null;
-  const projections = ctx?.sessionProjections
-    ?? (typeof ctx?.get === 'function' ? ctx.get('sessionProjections') : undefined);
-  if (projections?.register && typeof z === 'function') {
+  const projections = typeof ctx.get === 'function' ? ctx.get('sessionProjections') : ctx.sessionProjections;
+  if (projections?.register && typeof z?.object === 'function') {
     try {
       const pendingCall = z.object({ id: z.string(), update: z.string().nullable() });
       const schema = z.object({ note: z.string(), turn: z.number(), pending: z.array(pendingCall), refresh: z.number() });
@@ -400,6 +400,7 @@ exports.apply = async function apply(ctx, config = {}) {
             state[field] = String(value).slice(0, 200);
           }
         }
+        const previous = (await durableDoc(sessionId)).doc;
         let stored;
         try {
           stored = await writeCheckpoint(sessionId, note, {
@@ -411,6 +412,15 @@ exports.apply = async function apply(ctx, config = {}) {
           throw new Error('断点落盘失败：' + describe(error));
         }
         durable.delete(sessionId);
+        if (args.taskId) bus.setTask(sessionId, args.taskId);
+        if (args.goalRef) bus.noteGoal(sessionId, args.goalRef);
+        if (settings.writeSchema === 2 && ['runs', 'counterexamples', 'excluded'].some(field => {
+          const old = previous?.state?.[field];
+          const known = new Set(Array.isArray(old) ? old : []);
+          return (state[field] ?? []).some(entry => !known.has(redact(entry)));
+        })) {
+          bus.noteEvidence(sessionId, { kind: 'checkpoint' });
+        }
         return stored === note
           ? '已记录本次任务断点（已落盘）。'
           : '已记录本次任务断点（已落盘；疑似密钥字段已过滤）。';
@@ -432,9 +442,10 @@ exports.apply = async function apply(ctx, config = {}) {
     const doc = loaded.doc;
     if (!note && !doc?.state) return decision;
 
-    const noteHash = hash(note);
+    const noteHash = hash(JSON.stringify([note, doc?.state]));
     const refresh = projectionState(agent)?.refresh ?? 0;
-    const goalRev = doc?.goalRef?.revision ?? null;
+    const goalRev = JSON.stringify(doc?.goalRef ?? null);
+    if (doc?.goalRef) bus.noteGoal(sessionId, doc.goalRef);
     const previous = lastShown.get(agent) ?? null;
     let reason = '';
     if (!previous) reason = 'resume';

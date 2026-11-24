@@ -1,6 +1,6 @@
 # 求证 · DSH Agent Preset
 
-版本 1.4.1。适用于 OI 解题、反例定位与有限预算的对拍。
+版本 1.4.5。适用于 OI 解题、反例定位与有限预算的对拍。
 
 「求证」是 DeepSeek Harness 的一个 agent preset bundle：persona 定义求证工作流，`loop-guard.cjs` 做运行时防循环，`memory.cjs` 注册 `proof_checkpoint` 断点工具，其余是标准工具配置。
 
@@ -28,10 +28,10 @@ dsh plugin --profile desktop add github:Dexter-cpp/dsh-proof-preset
 
 `package.json` 里的 `name` 是 `@local/dsh-proof-preset`，`bundles` 里写的也是这个名字。用图形界面的插件管理器启用等价。
 
-**离线 tgz**（仓库里不带，需用 `npm pack` 自己产出）：
+**离线 tgz**（可使用本次交付的安装包）：
 
 ```powershell
-dsh plugin --profile desktop add file:C:/path/to/local-dsh-proof-preset-1.4.0.tgz
+dsh plugin --profile desktop add file:C:/path/to/local-dsh-proof-preset-1.4.5.tgz
 ```
 
 **源码直连**，改完立刻生效，适合自己调：
@@ -67,8 +67,9 @@ dsh plugin --profile desktop add file:C:/path/to/local-dsh-proof-preset-1.4.0.tg
 
 1. **连续相同失败**：同一工具 + 同一参数签名 + 同一**失败**结果连续 N 次（默认 3）后，第 N+1 次在 `tools/pre-execute` 被拒绝，错误码 `REPEATED_IDENTICAL_FAILURE`。拒绝理由本身带换路指令，同一步还会用 `createUserMessage` 注入一条「请换一个可检验的新策略，并先说明新假设与判定标准」。
 2. **成功调用永不硬拦**：重复读取、重复查询最多得到一条软提示；1.3.1 把成功重复判成失败的问题已修复。
-3. **连续相同输出**：参数不同但**同一工具**输出连续 N 次相同，只注入提示，不硬拒绝；streak 按工具隔离，图片/资源等非文本输出也参与比较。
-4. **停滞检查**：连续 N 轮没有新证据（`proof_hypotheses` 状态变化、断点保存都算新证据）才注入一次「写出当前假设与下一个区分性观察」，不再按用户轮次机械触发。
+3. **连续相同输出**：**同一工具**输出连续 N 次相同，只注入提示，不硬拒绝；streak 按工具隔离，图片/资源等非文本输出也参与比较。
+4. **停滞检查**：同一用户轮内，连续 N 个有工具结果的步骤只得到重复观察，才触发检查。记录新的有效证据或在断点增加运行结果、反例、已排除项，可解除停滞计数。
+5. **交替失败**：A 和 B 是两个不同的工具调用或参数组合。两者按相同顺序各自复现相同失败 N 个周期（默认 3）后，再试预期的下一调用会收到 `REPEATED_FAILURE_CYCLE`。不同调用仍可执行。成功、切换目标或开始新的用户轮会打断旧失败链。
 
 连续两次撞上同一拦截会结束本轮；同一轮只拒绝一次，不会无限拒绝。`*_checkpoint`、`*_directions`、`*_hypotheses`、`*_guard_stats`、`todo_write` 等记账工具不参与计数。
 
@@ -84,7 +85,7 @@ dsh plugin --profile desktop add file:C:/path/to/local-dsh-proof-preset-1.4.0.tg
 | `loop-guard.config.denyOn` | `failure` | 只有失败重复才硬拦；`never` = 只提示 | 同上，改 `denyOn` |
 | `loop-guard.config.threshold` | `3` | 连续相同失败 N 次后拦第 N+1 次；2..10，超出夹取 | 同上，改 `threshold` |
 | `loop-guard.config.outputStreakThreshold` | `3` | 同工具连续相同输出 N 次 → 软提示；2..10 | 同上 |
-| `loop-guard.config.stallRounds` | `3` | 连续 N 轮无新证据 → 停滞检查；2..10 | 同上 |
+| `loop-guard.config.stallRounds` | `3` | 连续 N 个工具步骤只得到重复观察 → 停滞检查；2..10 | 同上 |
 | `loop-guard.config.selfCheckEvery` | `0` | 1.3.1 兼容项；`>0` 才按用户轮次自检 | 同上 |
 | `loop-guard.config.maxNoticesPerTurn` | `2` | 每轮最多注入条数；1..3 | 同上 |
 | `loop-guard.config.stats` | `memory` | `off` / `memory`（只在内存计数，不记参数正文） | 同上 |
@@ -93,7 +94,7 @@ dsh plugin --profile desktop add file:C:/path/to/local-dsh-proof-preset-1.4.0.tg
 | `session-memory.config.injectOn` | 四项全开 | 注入时机：resume / compaction / goal-change / milestone | 同上 |
 | `session-memory.config.maxInjectChars` | `800` | 单次注入上限；200..2000 | 同上 |
 
-`threshold` 数的是「连续相同失败次数」，`stallRounds` 数的是「连续无新证据轮次」，`outputStreakThreshold` 数的是「同工具相同输出次数」，三者不共用计数器。非法值不会静默生效：整数越界会夹取，类型/枚举不对会回退默认，并在 stderr 打 `[loop-guard] 配置 ...` 告警。想看实际生效值，跑 `dsh --profile headless --patch ./cordis.patch.yml --dump-config`。
+`threshold` 控制连续相同失败次数与 A/B 周期数，`stallRounds` 数的是「同一用户轮内连续重复观察的步骤数」，`outputStreakThreshold` 数的是「同工具相同输出次数」，三者不共用计数器。非法值不会静默生效：整数越界会夹取，类型/枚举不对会回退默认，并在 stderr 打 `[loop-guard] 配置 ...` 告警。想看实际生效值，跑 `dsh --profile headless --patch ./cordis.patch.yml --dump-config`。
 
 ## 假设账本
 
@@ -164,7 +165,7 @@ Remove-Item "$env:DSH_HOME\checkpoints\<profile>\*.corrupt-*.json"
 ## 测试
 
 ```powershell
-node --test                  # 单元测试：守卫 33 条 + 断点 13 条 + parity 12 条，不需要 dsh
+node --test                  # 单元测试：守卫、断点与共享文件一致性，不需要 dsh
 node sync-runtime.cjs --check  # 共享文件与 runtime-parity.json 是否一致
 ```
 
